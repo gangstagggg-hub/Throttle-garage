@@ -1,0 +1,80 @@
+plugins {
+    id 'com.android.application'
+}
+
+def versionProps = new Properties()
+file('../version.properties').withInputStream { versionProps.load(it) }
+def codeBase = versionProps.getProperty('VERSION_CODE_BASE', '0').toInteger()
+def runNumber = (System.getenv('GITHUB_RUN_NUMBER') ?: '1').toInteger()
+
+// App-ikoner: hvis du har lagt inn egne ikoner i res/mipmap-*, brukes de. Ellers brukes standardikonet,
+// slik at bygget aldri feiler på manglende ikon. Se IKONER.md.
+def hasLauncher = file('src/main/res/mipmap-xxxhdpi/ic_launcher.png').exists() ||
+        file('src/main/res/mipmap-anydpi-v26/ic_launcher.xml').exists() ||
+        file('src/main/res/mipmap-anydpi/ic_launcher.xml').exists()
+def hasRound = file('src/main/res/mipmap-xxxhdpi/ic_launcher_round.png').exists() ||
+        file('src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml').exists() ||
+        file('src/main/res/mipmap-anydpi/ic_launcher_round.xml').exists()
+def fallbackIcon = '@android:drawable/sym_def_app_icon'
+def iconRef = hasLauncher ? '@mipmap/ic_launcher' : fallbackIcon
+def roundRef = hasRound ? '@mipmap/ic_launcher_round' : iconRef
+
+android {
+    namespace 'io.github.gangstagggg.throttlegarage'
+    compileSdk 36
+
+    defaultConfig {
+        applicationId 'io.github.gangstagggg.throttlegarage'
+        minSdk 29
+        targetSdk 36
+        versionCode codeBase + runNumber
+        versionName versionProps.getProperty('VERSION_NAME', '1.0')
+        manifestPlaceholders = [appIcon: iconRef, appRoundIcon: roundRef]
+    }
+
+    lint {
+        checkReleaseBuilds false
+        abortOnError false
+    }
+
+    // Nøkkelen kommer fra GitHub-hemmeligheter (se .github/workflows/android.yml).
+    // Uten nøkkel bygges en usignert versjon, som er greit for lokale tester.
+    signingConfigs {
+        release {
+            def keystorePath = System.getenv('KEYSTORE_PATH')
+            if (keystorePath) {
+                storeFile file(keystorePath)
+                storePassword System.getenv('KEYSTORE_PASSWORD')
+                keyAlias System.getenv('KEY_ALIAS')
+                keyPassword System.getenv('KEY_PASSWORD')
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            if (System.getenv('KEYSTORE_PATH')) {
+                signingConfig signingConfigs.release
+            }
+        }
+    }
+
+    // Webappen ligger i mappen web/ og pakkes inn i appen som filer.
+    sourceSets {
+        main {
+            assets.srcDirs = ['../web']
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    implementation 'androidx.webkit:webkit:1.12.1'
+    implementation 'androidx.activity:activity:1.10.1'
+    implementation 'androidx.core:core:1.15.0'
+}
