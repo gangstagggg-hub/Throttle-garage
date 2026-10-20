@@ -483,7 +483,7 @@ textarea:focus{border-color:var(--acc)}
 
 <script>
 /* Lim inn Google Maps-nøkkelen din mellom anførselstegnene, så slipper du å skrive den inn i appen. */
-const BUILTIN_MAPS_KEY="AIzaSyAJ0QAncW-SD2kPN1P4MpCwY71j9wmKsZk";
+const BUILTIN_MAPS_KEY="";
 
 /* ============ DATA: "Modell|fra|til(0=nå)|hk|type" ============ */
 const BRANDS = [
@@ -1263,7 +1263,13 @@ $("wishList").addEventListener("click",e=>{
 /* ============ rides + maps ============ */
 const DARKSTYLE=[{elementType:"geometry",stylers:[{color:"#16161a"}]},{elementType:"labels.text.fill",stylers:[{color:"#8d8d93"}]},{elementType:"labels.text.stroke",stylers:[{color:"#0b0b0c"}]},{featureType:"road",elementType:"geometry",stylers:[{color:"#2a2a2e"}]},{featureType:"road.highway",elementType:"geometry",stylers:[{color:"#3a3a40"}]},{featureType:"water",elementType:"geometry",stylers:[{color:"#0b0b0c"}]},{featureType:"poi",stylers:[{visibility:"off"}]}];
 let gP=null;
-window.gm_authFailure=()=>{document.querySelectorAll(".map").forEach(m=>{m.innerHTML='<div class="mapmsg">Google Maps avviste nøkkelen. Sjekk at Maps JavaScript API og Maps Embed API er aktivert, og at nøkkelen tillater denne nettadressen.</div>';});};
+let gmBad=false;
+window.gm_authFailure=()=>{
+  gmBad=true;
+  const lm=$("liveMap");
+  if(rec&&lm){makeMap(lm).then(m=>{liveMap=m;if(rec&&rec.points.length)m.setPath(rec.points,false);}).catch(()=>{});}
+  document.querySelectorAll(".map").forEach(m=>{if(m!==lm)m.innerHTML='<div class="mapmsg">Google avviste nøkkelen. Trykk «Skjul kart» og så «Vis kart» for å bruke OpenStreetMap-kartet.</div>';});
+};
 function loadGoogle(key){
   if(gP)return gP;
   gP=new Promise((res,rej)=>{
@@ -1273,6 +1279,25 @@ function loadGoogle(key){
     s.async=true;s.onerror=()=>{gP=null;rej(new Error("gmaps"));};document.head.appendChild(s);
   });
   return gP;
+}
+async function loadMapLibre(){
+  if(window.maplibregl)return;
+  await new Promise((res,rej)=>{
+    const l=document.createElement("link");l.rel="stylesheet";l.href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css";document.head.appendChild(l);
+    const s=document.createElement("script");s.src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js";s.onload=res;s.onerror=rej;document.head.appendChild(s);
+  });
+}
+function ofmDark(map){
+  const st=map.getStyle();
+  (st.layers||[]).forEach(L=>{
+    try{
+      const id=L.id;
+      if(L.type==="background")map.setPaintProperty(id,"background-color","#0b0b0c");
+      else if(L.type==="fill"){map.setPaintProperty(id,"fill-color",/water/.test(id)?"#050507":"#16161a");map.setPaintProperty(id,"fill-outline-color","#1c1c20");}
+      else if(L.type==="line"&&!/^rt-/.test(id)){map.setPaintProperty(id,"line-color",/water/.test(id)?"#050507":/casing/.test(id)?"#101013":/boundary/.test(id)?"#3a3a40":"#2e2e34");}
+      else if(L.type==="symbol"){map.setPaintProperty(id,"text-color","#8d8d93");map.setPaintProperty(id,"text-halo-color","#0b0b0c");}
+    }catch(e){}
+  });
 }
 async function loadLeaflet(){
   if(window.L)return;
@@ -1284,7 +1309,7 @@ async function loadLeaflet(){
 async function makeMap(el){
   el.innerHTML="";
   const key=state.settings.mapsKey||BUILTIN_MAPS_KEY;
-  if(key){
+  if(key&&!gmBad){
     try{
       const gm=await loadGoogle(key);
       const map=new gm.Map(el,{center:{lat:60,lng:10},zoom:5,mapTypeControl:false,streetViewControl:false,fullscreenControl:false,styles:DARKSTYLE});
@@ -1299,6 +1324,27 @@ async function makeMap(el){
       }};
     }catch(e){console.error(e);}
   }
+  try{
+    await loadMapLibre();
+    el.innerHTML="";
+    const map=new maplibregl.Map({container:el,style:"https://tiles.openfreemap.org/styles/positron",center:[10,60],zoom:4,attributionControl:{compact:true}});
+    await new Promise((res,rej)=>{const to=setTimeout(()=>rej(new Error("kartfeil")),10000);map.once("load",()=>{clearTimeout(to);res();});});
+    ofmDark(map);
+    map.addSource("rt",{type:"geojson",data:{type:"Feature",geometry:{type:"LineString",coordinates:[]}}});
+    map.addLayer({id:"rt-line",type:"line",source:"rt",layout:{"line-cap":"round","line-join":"round"},paint:{"line-color":"#d7ff1f","line-width":5}});
+    const dot=c=>{const d=document.createElement("div");d.style.cssText=`width:14px;height:14px;border-radius:50%;background:${c};border:2px solid #0b0b0c`;return d;};
+    let mk=[];
+    setTimeout(()=>map.resize(),60);
+    return {kind:"ofm",setPath(pts,fit){
+      const co=pts.map(p=>[p[1],p[0]]);
+      map.getSource("rt").setData({type:"Feature",geometry:{type:"LineString",coordinates:co}});
+      mk.forEach(m=>m.remove());mk=[];
+      if(co.length)mk.push(new maplibregl.Marker({element:dot("#d7ff1f")}).setLngLat(co[0]).addTo(map));
+      if(co.length>1)mk.push(new maplibregl.Marker({element:dot("#ff5a1f")}).setLngLat(co[co.length-1]).addTo(map));
+      if(fit&&co.length>1){const b=new maplibregl.LngLatBounds(co[0],co[0]);co.forEach(c=>b.extend(c));map.fitBounds(b,{padding:30,duration:0});}
+      else if(co.length){map.jumpTo({center:co[co.length-1],zoom:Math.max(map.getZoom(),15)});}
+    }};
+  }catch(e){console.error(e);el.innerHTML="";}
   await loadLeaflet();
   const map=L.map(el).setView([60,10],5);
   L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",{attribution:"© OpenStreetMap © CARTO",maxZoom:19}).addTo(map);
